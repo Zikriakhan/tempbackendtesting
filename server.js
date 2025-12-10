@@ -3,8 +3,58 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
+// Load environment variables and MongoDB client
+require('dotenv').config();
+const mongoose = require('mongoose');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Connect to MongoDB Atlas if URI present
+const mongoUri = process.env.MONGODB_URI || process.env.AtlasURL;
+if (mongoUri) {
+    // Mask credentials for safe logging
+    function maskMongoUri(uri) {
+        try {
+            const atIndex = uri.indexOf('@');
+            if (atIndex === -1) return uri;
+            const creds = uri.substring(0, atIndex); // e.g. "mongodb+srv://user:pass"
+            const rest = uri.substring(atIndex);
+            const colonIndex = creds.indexOf(':', creds.indexOf('//') + 2);
+            if (colonIndex === -1) return uri;
+            return creds.substring(0, colonIndex + 1) + '***' + rest;
+        } catch (e) {
+            return uri;
+        }
+    }
+
+    // Basic host validation to catch malformed URIs that produce SRV lookups like _mongodb._tcp.12345
+    function extractHostCandidate(uri) {
+        try {
+            const afterAt = uri.includes('@') ? uri.split('@')[1] : uri.split('://')[1];
+            if (!afterAt) return null;
+            // host is before first "/"
+            return afterAt.split('/')[0];
+        } catch (e) {
+            return null;
+        }
+    }
+
+    const masked = maskMongoUri(mongoUri);
+    const hostCandidate = extractHostCandidate(mongoUri);
+    console.log('Connecting to MongoDB URI:', masked);
+
+    if (hostCandidate && (/^\d+$/.test(hostCandidate) || !hostCandidate.includes('.'))) {
+        console.error('❌ MongoDB connection aborted: host looks invalid:', hostCandidate);
+        console.error('Please verify `MONGODB_URI` in your `.env` has the correct host (e.g. testing.jvcwq8j.mongodb.net) and that the password is URL-encoded.');
+    } else {
+        mongoose.connect(mongoUri)
+        .then(() => console.log('✅ Connected to MongoDB Atlas'))
+        .catch((err) => console.error('❌ MongoDB connection error:', err.message));
+    }
+} else {
+    console.warn('⚠️  No MongoDB URI found in environment. Server will use in-memory data.');
+}
 
 // Middleware
 app.use(cors());
