@@ -1,0 +1,44 @@
+{
+  "data": [
+    {
+      "id": "1",
+      "title": "Introduction to Biology",
+      "description": "Biology is the science of life. It studies living things, how they grow, survive, and interact with the environment.",
+      "category": "Science",
+      "icon": "🧬",
+      "modules": [
+        {
+          "id": "1",
+          "title": "Biology Basics",
+          "topics": [
+            {
+              "id": "1",
+              "title": "What is Biology?",
+              "completed": true,
+              "content": {
+                "main": "Biology is the scientific study of life and living organisms...",
+                "sections": []
+              }
+            }
+          ],
+          "test": {
+            "title": "Biology Assessment",
+            "questions": [
+              {
+                "id": "1",
+                "question": "What is gaseous exchange?",
+                "options": [
+                  "Food digestion process",
+                  "Oxygen and carbon dioxide transfer",
+                  "Blood circulation",
+                  " √((x₂ − x₁)² + (y₂ − y₁)²)"
+                ],
+                "correctAnswer": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

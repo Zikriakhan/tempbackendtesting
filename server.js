@@ -3,67 +3,56 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
-// Load environment variables and MongoDB client
 require('dotenv').config();
 const mongoose = require('mongoose');
+const { Course } = (() => {
+    try {
+        return require('./models');
+    } catch (e) {
+        return {};
+    }
+})();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB Atlas if URI present
-const mongoUri = process.env.MONGODB_URI || process.env.AtlasURL;
+let useDb = false;
+
+// Connect to MongoDB if MONGODB_URI is set
+const mongoUri = process.env.MONGODB_URI;
 if (mongoUri) {
-    // Mask credentials for safe logging
-    function maskMongoUri(uri) {
-        try {
-            const atIndex = uri.indexOf('@');
-            if (atIndex === -1) return uri;
-            const creds = uri.substring(0, atIndex); // e.g. "mongodb+srv://user:pass"
-            const rest = uri.substring(atIndex);
-            const colonIndex = creds.indexOf(':', creds.indexOf('//') + 2);
-            if (colonIndex === -1) return uri;
-            return creds.substring(0, colonIndex + 1) + '***' + rest;
-        } catch (e) {
-            return uri;
-        }
-    }
+    mongoose.connect(mongoUri).then(() => {
+        console.log('✅ Connected to MongoDB Atlas');
+        useDb = true;
 
-    // Basic host validation to catch malformed URIs that produce SRV lookups like _mongodb._tcp.12345
-    function extractHostCandidate(uri) {
-        try {
-            const afterAt = uri.includes('@') ? uri.split('@')[1] : uri.split('://')[1];
-            if (!afterAt) return null;
-            // host is before first "/"
-            return afterAt.split('/')[0];
-        } catch (e) {
-            return null;
-        }
-    }
-
-    const masked = maskMongoUri(mongoUri);
-    const hostCandidate = extractHostCandidate(mongoUri);
-    console.log('Connecting to MongoDB URI:', masked);
-
-    if (hostCandidate && (/^\d+$/.test(hostCandidate) || !hostCandidate.includes('.'))) {
-        console.error('❌ MongoDB connection aborted: host looks invalid:', hostCandidate);
-        console.error('Please verify `MONGODB_URI` in your `.env` has the correct host (e.g. testing.jvcwq8j.mongodb.net) and that the password is URL-encoded.');
-    } else {
-        mongoose.connect(mongoUri)
-        .then(() => console.log('✅ Connected to MongoDB Atlas'))
-        .catch((err) => console.error('❌ MongoDB connection error:', err.message));
-    }
-} else {
-    console.warn('⚠️  No MongoDB URI found in environment. Server will use in-memory data.');
+        // Seed DB if empty
+        (async () => {
+            try {
+                const count = await Course.countDocuments();
+                if (count === 0) {
+                    console.log('ℹ️ Course collection empty — seeding sample data');
+                    // Use the in-memory courseData variable defined below; delay to ensure declared
+                    if (typeof courseData !== 'undefined' && Array.isArray(courseData.courses)) {
+                        const docs = courseData.courses.map(c => ({ ...c }));
+                        await Course.insertMany(docs);
+                        console.log('✅ Seeded courses into MongoDB');
+                    }
+                } else {
+                    console.log(`ℹ️ Course collection has ${count} documents`);
+                }
+            } catch (err) {
+                console.error('❌ Error during seeding:', err.message);
+            }
+        })();
+    }).catch(err => {
+        console.error('❌ MongoDB connection aborted:', err.message);
+    });
 }
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-
-// Authentication and progress tracking removed per request
 
 // ID counters
 let courseIdCounter = 2;
@@ -88,7 +77,7 @@ let courseData = {
                         {
                             id: "1",
                             title: "What is Biology?",
-                            completed: false,
+                            completed: true,
                             content: {
                                 main: "Biology is the scientific study of life and living organisms...",
                                 sections: []
@@ -133,9 +122,36 @@ const findTopicById = (courseId, moduleId, topicId) => {
 };
 
 // ==================== COURSE ROUTES ====================
-app.get('/api/courses', (req, res) => {
+// Admin/utility: seed courses via POST { data: [ ...courses ] }
+app.post('/api/seed', async (req, res) => {
     try {
-        res.json({
+        if (!useDb || !Course) {
+            return res.status(400).json({ success: false, message: 'Database not connected' });
+        }
+
+        const payload = req.body;
+        const courses = Array.isArray(payload?.data) ? payload.data : payload;
+        if (!Array.isArray(courses) || courses.length === 0) {
+            return res.status(400).json({ success: false, message: 'Provide an array of course objects in request body' });
+        }
+
+        await Course.deleteMany({});
+        await Course.insertMany(courses.map(c => ({ ...c }))); 
+        return res.json({ success: true, message: `Seeded ${courses.length} courses` });
+    } catch (err) {
+        console.error('❌ Seed error:', err.message);
+        return res.status(500).json({ success: false, message: 'Seed failed', error: err.message });
+    }
+});
+
+app.get('/api/courses', async (req, res) => {
+    try {
+        if (useDb && Course) {
+            const courses = await Course.find({}, { _id: 0, __v: 0 }).lean();
+            return res.json({ success: true, data: courses, count: courses.length });
+        }
+
+        return res.json({
             success: true,
             data: courseData.courses,
             count: courseData.courses.length
@@ -149,11 +165,18 @@ app.get('/api/courses', (req, res) => {
     }
 });
 
-app.get('/api/courses/:courseId', (req, res) => {
+app.get('/api/courses/:courseId', async (req, res) => {
     try {
         const { courseId } = req.params;
+        if (useDb && Course) {
+            const course = await Course.findOne({ id: courseId }, { _id: 0, __v: 0 }).lean();
+            if (!course) {
+                return res.status(404).json({ success: false, message: 'Course not found' });
+            }
+            return res.json({ success: true, data: course });
+        }
+
         const course = findCourseById(courseId);
-        
         if (!course) {
             return res.status(404).json({
                 success: false,
@@ -1024,32 +1047,12 @@ app.use((error, req, res, next) => {
     });
 });
 
-// Start server with retry on EADDRINUSE
-function startServer(port, attempt = 0, maxAttempts = 5) {
-    const server = app.listen(port, () => {
-        console.log(`🚀 Biology Course API running on port ${port}`);
-        console.log(`🎓 Courses Endpoint: http://localhost:${port}/api/courses`);
-        console.log(`📝 Test Endpoint: http://localhost:${port}/api/courses/1/modules/1/test`);
-    });
-
-    server.on('error', (err) => {
-        if (err && err.code === 'EADDRINUSE') {
-            console.error(`❌ Port ${port} in use.`);
-            if (attempt < maxAttempts) {
-                const nextPort = parseInt(port, 10) + 1;
-                console.log(`ℹ️  Trying next port ${nextPort} (attempt ${attempt + 1}/${maxAttempts})...`);
-                setTimeout(() => startServer(nextPort, attempt + 1, maxAttempts), 800);
-            } else {
-                console.error(`❌ Failed to bind after ${maxAttempts} attempts. Exiting.`);
-                process.exit(1);
-            }
-        } else {
-            console.error('Server error:', err);
-            process.exit(1);
-        }
-    });
-
-    return server;
-}
-
-startServer(PORT);
+// Start server
+// Add this before your routes
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.listen(PORT, () => {
+    console.log(`🚀 Biology Course API running on port ${PORT}`);
+    console.log(`🎓 Courses Endpoint: http://localhost:${PORT}/api/courses`);
+    console.log(`📝 Test Endpoint: http://localhost:${PORT}/api/courses/1/modules/1/test`);
+});
