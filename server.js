@@ -58,8 +58,12 @@ if (mongoUri) {
 
 // Middleware
 app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Authentication and progress tracking removed per request
 
 // ID counters
 let courseIdCounter = 2;
@@ -1020,12 +1024,32 @@ app.use((error, req, res, next) => {
     });
 });
 
-// Start server
-// Add this before your routes
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.listen(PORT, () => {
-    console.log(`🚀 Biology Course API running on port ${PORT}`);
-    console.log(`🎓 Courses Endpoint: http://localhost:${PORT}/api/courses`);
-    console.log(`📝 Test Endpoint: http://localhost:${PORT}/api/courses/1/modules/1/test`);
-});
+// Start server with retry on EADDRINUSE
+function startServer(port, attempt = 0, maxAttempts = 5) {
+    const server = app.listen(port, () => {
+        console.log(`🚀 Biology Course API running on port ${port}`);
+        console.log(`🎓 Courses Endpoint: http://localhost:${port}/api/courses`);
+        console.log(`📝 Test Endpoint: http://localhost:${port}/api/courses/1/modules/1/test`);
+    });
+
+    server.on('error', (err) => {
+        if (err && err.code === 'EADDRINUSE') {
+            console.error(`❌ Port ${port} in use.`);
+            if (attempt < maxAttempts) {
+                const nextPort = parseInt(port, 10) + 1;
+                console.log(`ℹ️  Trying next port ${nextPort} (attempt ${attempt + 1}/${maxAttempts})...`);
+                setTimeout(() => startServer(nextPort, attempt + 1, maxAttempts), 800);
+            } else {
+                console.error(`❌ Failed to bind after ${maxAttempts} attempts. Exiting.`);
+                process.exit(1);
+            }
+        } else {
+            console.error('Server error:', err);
+            process.exit(1);
+        }
+    });
+
+    return server;
+}
+
+startServer(PORT);
